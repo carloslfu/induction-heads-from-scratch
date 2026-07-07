@@ -1,0 +1,5 @@
+__pycache__/
+.DS_Store
+checkpoints/
+params_*.pt
+train.log
