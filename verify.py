@@ -51,9 +51,14 @@ def main():
     check("step at >10% acc", t10, 2400, 2500, "{:.0f}")
     check("step at >50% acc", t50, 2700, 2750, "{:.0f}")
     check("10%→50% window (steps)", t50 - t10, 200, 350, "{:.0f}")
-    print(f"         step at >70% acc: {t70}")
+    check("step at >70% acc", t70, 2950, 3000, "{:.0f}")
+    check("starts at chance (1/64)", acc[0], 0.005, 0.03)
+    t07 = next(s for s, a in zip(steps, acc) if a > 0.07)
+    check("slow crawl: crosses 7% only at ~1,850", t07, 1700, 2000, "{:.0f}")
     a2400 = next(a for s, a in zip(steps, acc) if s == 2400)
-    check("plateau acc at step 2400", a2400, 0.05, 0.10)
+    check("pre-jump acc at step 2400 (~9%)", a2400, 0.05, 0.10)
+    a3200 = next(a for s, a in zip(steps, acc) if s == 3200)
+    check("levels off ~72% at step 3200", a3200, 0.70, 0.74)
     check("control-pos loss final (> ln64 = 4.159)",
           log2[-1]["ctl_loss"], 4.159, 4.60)
 
@@ -106,6 +111,10 @@ def main():
            + [(1, h) for h in range(4) if h != 1])
     check("ablate prev 0.3", ab_prev, 0.53, 0.59)
     check("ablate ind 1.1", ab_ind, 0.60, 0.66)
+    o0 = analyze.ablated_accuracy(p, [(0, h) for h in range(4) if h != 3])
+    o1 = analyze.ablated_accuracy(p, [(1, h) for h in range(4) if h != 1])
+    check("ablate other-3 L0 heads", o0, 0.37, 0.42)
+    check("ablate other-3 L1 heads", o1, 0.29, 0.34)
     check("only pair kept", pair_only, 0.13, 0.20)
     check("pair-only vs chance ratio", pair_only / (1 / g.VOCAB), 8, 14,
           "{:.1f}")
@@ -127,6 +136,40 @@ def main():
     check("bigram matcher", res["bigram"], 0.97, 0.99)
     check("model beats single-token matcher",
           log2[-1]["ind_acc"] - res["all prior positions"], 0.05, 0.20)
+    check("position prior doesn't raise the ceiling (|Δ|)",
+          abs(res["all prior positions"] - res["positions < 64 only"]),
+          0, 0.005, "{:.4f}")
+
+    print("\n-- Open-question probes --")
+    d2 = analyze.offset_attention(p, -2)
+    check("no two-back head in layer 0 (max attn at i−2)", max(d2), 0, 0.05)
+    accs = analyze.depth_accuracy(p)
+    check("depth accuracy at j=0", accs[0], 0.69, 0.75)
+    rest = sum(accs[1:]) / len(accs[1:])
+    check("depth accuracy nearly flat (|j=0 − mean rest|)",
+          abs(accs[0] - rest), 0, 0.06)
+
+    print("\n-- Seed-1 replication (training_log_L2s1.json) --")
+    with open("training_log_L2s1.json") as f:
+        logs1 = json.load(f)
+    s_steps = [r["step"] for r in logs1]
+    s_acc = [r["ind_acc"] for r in logs1]
+    s10 = next(s for s, a in zip(s_steps, s_acc) if a > 0.10)
+    s50 = next(s for s, a in zip(s_steps, s_acc) if a > 0.50)
+    check("s1: step at >10% acc", s10, 1900, 2000, "{:.0f}")
+    check("s1: step at >50% acc", s50, 2250, 2350, "{:.0f}")
+    check("s1: 10%→50% window (steps)", s50 - s10, 300, 400, "{:.0f}")
+    check("s1: final induction accuracy", logs1[-1]["ind_acc"], 0.74, 0.77)
+    s_last = logs1[-1]
+    check("s1: all four L1 heads induction (min score)",
+          min(s_last["ind"][1]), 0.42, 0.50)
+    check("s1: L1 lockstep (max − min score)",
+          max(s_last["ind"][1]) - min(s_last["ind"][1]), 0, 0.06)
+    prev1 = sorted(s_last["prev"][0], reverse=True)
+    check("s1: one dominant writer", prev1[0], 0.40, 0.48)
+    check("s1: partial writer #2", prev1[1], 0.15, 0.35)
+    check("s1: partial writer #3", prev1[2], 0.15, 0.35)
+    check("s1: absent writer", prev1[3], 0.0, 0.12)
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED" if PASS else "SOME CHECKS FAILED")

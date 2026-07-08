@@ -1,12 +1,13 @@
 # Induction heads, from scratch
 
 Train a tiny two-layer transformer to continue sequences of pure random
-tokens and something remarkable happens: for ~2,400 steps it learns almost
-nothing — then, in a window of a few hundred steps, an algorithm snaps into
-place and accuracy jumps from 7% to 75%. The algorithm is the **induction
-head**: *"find where the current token appeared before, copy what came
-next."* It is the mechanism behind in-context learning, and its abrupt
-formation — a **phase change** — was documented by Anthropic in
+tokens and something remarkable happens: for ~2,400 steps it improves only
+marginally — then, in a window of a few hundred steps, an algorithm snaps
+into place and accuracy jumps from 9% to 75%. The algorithm is the
+**induction head**: *"find where the current token appeared before, copy
+what came next."* It is the leading candidate mechanism for in-context
+learning, and its abrupt formation — a **phase change** — was documented
+by Anthropic in
 [Olsson et al. 2022](https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html).
 
 This repo reproduces the phenomenon end-to-end on a laptop (~9 minutes for
@@ -25,9 +26,11 @@ The transformer is written from scratch in raw PyTorch tensors — no
 The pattern-completion rule `[A][B] … [A] → predict [B]`. If "Kowalczyk"
 appeared 500 tokens ago, the model can continue "Kow" with "alczyk" even if
 it never saw that name in training — the knowledge is in the *context*, not
-the weights. This is why LLMs can reuse your variable names, keep spelling
-consistent, and learn from few-shot examples. Induction heads are the
-minimal circuit implementing it.
+the weights. This is a big part of why LLMs can reuse your variable names,
+keep spelling consistent, and learn from few-shot examples — Olsson et al.
+present "preliminary and indirect evidence" that induction heads drive the
+majority of all in-context learning. Induction heads are the minimal
+circuit implementing the pattern.
 
 ## How the circuit works — the answer up front
 
@@ -91,23 +94,26 @@ no LayerNorm, no biases: **163,840 parameters**. Also a 1-layer twin
 
 | Milestone (2-layer) | Step |
 |---|---|
-| Plateau: accuracy stuck at 7–9% | 0 – 2,400 |
+| Slow crawl: chance (1.6%) → 9% | 0 – 2,400 |
 | Accuracy > 10% | 2,450 |
 | Accuracy > 50% | **2,725** |
 | Accuracy > 70% | 2,975 |
-| Converged ~75% | ~3,200 |
+| Levels off at ~72%, drifting to 0.752 | ~3,200 → 6,000 |
 
 ![phase change](00_phase_change.png)
 
-A real phase change: nothing visible for 2,400 steps, then accuracy goes
-from 10% to 50% in **275 steps**. Meanwhile the **1-layer control (blue)
-never moves** — after 6,000 steps it sits at 7.6%, no induction head,
-exactly as the theory demands: composition needs two layers.
+A real phase change: 2,400 steps of slow crawl, then accuracy goes from
+10% to 50% in **275 steps**. The control makes it sharper: the **1-layer
+model (blue) crawls identically — the two curves are indistinguishable
+until step ~2,400 — and then only the 2-layer one jumps.** After 6,000
+steps the control sits at 7.6%, no induction head, exactly as the theory
+demands: composition needs two layers.
 
-(Two honest details: the 7–9% plateau accuracy is above chance (1/64 ≈ 1.6%)
-— that's skip-trigram-ish statistics, the best a non-compositional
-strategy can do here. And control-position loss ends slightly *above*
-chance: the model pays a small confidence tax on unpredictable positions.)
+(Two honest details: the pre-jump crawl from 1.6% to ~9% is
+skip-trigram-ish statistics — the 1-layer control learns the same tricks,
+so that is the ceiling for any non-compositional strategy here. And
+control-position loss ends slightly *above* chance: the model pays a small
+confidence tax on unpredictable positions.)
 
 **Robustness**: a seed-1 replication (`--seed 1`, log committed as
 `training_log_L2s1.json`) shows the same story with shifted timing — phase
@@ -116,7 +122,10 @@ four layer-1 heads again becoming induction heads in lockstep. Which
 layer-0 heads become the writers varies by seed (seed 0: two co-equal;
 seed 1: one dominant, two partial) — the roles are stable, the cast is a
 lottery. Every quantitative claim in this README is checked by
-[`verify.py`](verify.py) (33 automated checks against the raw artifacts).
+[`verify.py`](verify.py) (55 automated checks against the raw artifacts —
+this run: Apple-silicon MPS, seed 0; on other backends the init draw
+differs, so head assignments and exact steps will shift while the
+structural story holds).
 
 ## Watching the circuit assemble
 
@@ -166,7 +175,7 @@ current token"?
 The matrix identifies the team exactly: the two behavioral prev-token heads
 (0.0, 0.3) write a channel that **all four** layer-1 heads read (~21
 attention logits of same-token matching); head 0.1 contributes nothing
-(0.3–0.6); head 0.2 is weak (~6). And the full 64×64 detector for the
+(≤ 0.6); head 0.2 is weak (~6). And the full 64×64 detector for the
 strongest pair:
 
 ![same-token detector](04_same_token_detector.png)
@@ -237,6 +246,7 @@ always leaves. If you figure it out, open an issue.
 python3 induction_from_scratch.py              # 2-layer run, ~6 min (M3 Pro, MPS)
 python3 induction_from_scratch.py --layers 1   # 1-layer control, ~3 min
 python3 analyze.py                             # all plots + numeric report
+python3 verify.py                              # re-checks every number in this README
 ```
 
 Requirements: Python 3, PyTorch (MPS, CUDA, or CPU), matplotlib.
@@ -251,16 +261,19 @@ Requirements: Python 3, PyTorch (MPS, CUDA, or CPU), matplotlib.
 | Optimizer | AdamW, lr 1e-3, weight decay 0.01, betas (0.9, 0.98), batch 256, 6k steps |
 | Checkpoints | 16 log-spaced snapshots per run → `checkpoints/` |
 
-Not tracked in git: `checkpoints/`, `params_*.pt`, `train.log` — all
-regenerated by training.
+Committed: the training logs (`training_log_*.json`), so every
+learning-curve and head-score claim is checkable without retraining. Not
+tracked: `checkpoints/`, `params_*.pt`, `*.log` — all regenerated by
+training.
 
 ## Going further
 
 - **Solve the open question**: where do the extra 11 points over the
   single-token matcher come from? `analyze.py` has all the tooling
   (attention caches, per-position accuracy) to chase it.
-- **Smeared keys**: Olsson et al. showed an architecture tweak that lets
-  one layer do partial induction shifts the phase change earlier. Add it.
+- **Smeared keys**: Olsson et al.'s architecture tweak — blend each key
+  with the previous position's key — lets even a *one-layer* model form
+  induction heads. Add it and watch the control stop being a control.
 - **Real text**: swap `make_batch` for a character-level corpus and watch
   the same heads emerge (slower, messier — the realistic version).
 - **Q-composition variant**: implement the pointer-arithmetic induction

@@ -415,6 +415,46 @@ def matching_ceiling(n=512):
 
 
 # -----------------------------------------------------------------------------
+# Open-question probes
+#
+# The model beats the single-token matcher ceiling (0.752 vs 0.641). These
+# rule out the obvious explanations: a "two-back" head that would enable
+# bigram-style annotation, and a bigram-style mechanism that would show up
+# as a dip at depth j=0 (where no in-segment left context exists).
+# -----------------------------------------------------------------------------
+def depth_accuracy(p, n=512):
+    """Induction accuracy per depth-into-segment j: query position p2+j
+    predicts seg[j+1]. Near-flat in j (incl. j=0) = no bigram mechanism."""
+    x, p1, p2 = eval_batch(n)
+    with torch.no_grad():
+        logits = g.forward(p, x)
+    pred = logits[:, :-1].argmax(-1)
+    tgt = x[:, 1:]
+    bi = torch.arange(x.shape[0], device=x.device)
+    accs = []
+    for j in range(g.SEG_LEN - 1):
+        q = p2 + j
+        accs.append((pred[bi, q] == tgt[bi, q]).float().mean().item())
+    print(f"  acc by depth j: j=0 {accs[0]:.3f} | mean j>=1 "
+          f"{sum(accs[1:]) / len(accs[1:]):.3f} | min {min(accs):.3f} | "
+          f"max {max(accs):.3f}")
+    return accs
+
+
+def offset_attention(p, offset=-2):
+    """Mean layer-0 attention at a fixed relative offset. offset=-2 probes
+    for a 'two-back' head (the bigram-annotation prerequisite)."""
+    x, _, _ = eval_batch()
+    with torch.no_grad():
+        _, attns = g.forward(p, x, want_attn=True)
+    d = torch.diagonal(attns[0], offset=offset, dim1=2, dim2=3)
+    vals = d.mean(dim=(0, 2)).tolist()
+    print(f"  layer-0 attention at offset {offset}: "
+          + "  ".join(f"head 0.{h}: {v:.3f}" for h, v in enumerate(vals)))
+    return vals
+
+
+# -----------------------------------------------------------------------------
 # Driver
 # -----------------------------------------------------------------------------
 def main():
@@ -444,6 +484,10 @@ def main():
 
     print("\nAblations (causal test):")
     plot_ablations(p, prev_head, ind_head)
+
+    print("\nOpen-question probes (depth accuracy, two-back attention):")
+    depth_accuracy(p)
+    offset_attention(p, -2)
 
 
 if __name__ == "__main__":
