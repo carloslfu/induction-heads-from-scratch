@@ -3,3 +3,4 @@ __pycache__/
 checkpoints/
 params_*.pt
 train.log
+replicate.log

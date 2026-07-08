@@ -10,19 +10,17 @@ Produces .png plots and prints numeric summaries:
   00  phase change: induction-position loss/accuracy over training (+1L control)
   01  per-head induction & previous-token scores over training
   02  attention patterns of the two circuit heads on one example
-  03  K-composition matrix (from weights alone): which L1 head wires into
-      which L2 head's keys
-  04  same-token detector: emb^T W_Q^T W_K W_OV^prev emb should be ~diagonal
+  03  circuit wiring from weights alone: which layer-0 head's write is
+      read by which layer-1 head's keys (same-token matching strength)
+  04  same-token detector: E · W_QK^ind · (W_OV^prev)^T · E^T ≈ diagonal
   05  ablation: zero each head, measure induction accuracy — causal test
 
-All FFT-free; everything runs in seconds on CPU/MPS.
+Everything runs in seconds on CPU/MPS.
 """
 
-import glob
 import json
 import math
 import os
-import re
 
 import torch
 import matplotlib.pyplot as plt
@@ -260,7 +258,7 @@ def n_layers_from(p):
 #
 # The induction head's attention score between current token A (query) and
 # a position annotated "previous token was X" (key) runs through:
-#   D = E W_Q2 W_K2^T (W_V1 W_O1)^T E^T      (VOCAB × VOCAB)
+#   D = E · W_QK^{ind, layer 1} · (W_OV^{prev, layer 0})^T · E^T   (V × V)
 # If the circuit is real, D is diagonal-dominant: score high iff X = A.
 # -----------------------------------------------------------------------------
 def same_token_detector(p, prev_head, ind_head):

@@ -10,9 +10,9 @@ induction algorithm:
     "find where the current token appeared before, copy what followed"
 
 which requires two attention heads in different layers composing:
-  - a previous-token head (layer 1): writes "the token before me was X"
+  - a previous-token head (layer 0): writes "the token before me was X"
     into each position's residual stream
-  - an induction head (layer 2): from the current token A, searches for
+  - an induction head (layer 1): from the current token A, searches for
     the position whose "before me" note says A — that position holds the
     token that followed A last time — and copies it to the output.
 
@@ -78,8 +78,9 @@ DEVICE = (
 )
 
 
-def run_tag(n_layers):
-    return f"L{n_layers}"
+def run_tag(n_layers, seed=SEED):
+    # seed 0 is the canonical run; other seeds get distinct artifact names
+    return f"L{n_layers}" + (f"s{seed}" if seed != SEED else "")
 
 
 # -----------------------------------------------------------------------------
@@ -238,7 +239,7 @@ def save_checkpoint(p, step, tag, dirpath="checkpoints"):
 
 def train(n_layers=N_LAYERS, n_steps=N_STEPS, seed=SEED):
     torch.manual_seed(seed)
-    tag = run_tag(n_layers)
+    tag = run_tag(n_layers, seed)
     p = init_params(n_layers, seed)
     n = sum(t.numel() for t in p.values())
     print(f"[{tag}] layers {n_layers} | params {n:,} | device {DEVICE}")
@@ -303,5 +304,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--layers", type=int, default=N_LAYERS)
     ap.add_argument("--steps", type=int, default=N_STEPS)
+    ap.add_argument("--seed", type=int, default=SEED)
     args = ap.parse_args()
-    train(n_layers=args.layers, n_steps=args.steps)
+    train(n_layers=args.layers, n_steps=args.steps, seed=args.seed)

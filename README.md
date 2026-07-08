@@ -91,22 +91,32 @@ no LayerNorm, no biases: **163,840 parameters**. Also a 1-layer twin
 
 | Milestone (2-layer) | Step |
 |---|---|
-| Plateau: accuracy stuck ~7% | 0 – 2,400 |
+| Plateau: accuracy stuck at 7–9% | 0 – 2,400 |
 | Accuracy > 10% | 2,450 |
 | Accuracy > 50% | **2,725** |
+| Accuracy > 70% | 2,975 |
 | Converged ~75% | ~3,200 |
 
 ![phase change](00_phase_change.png)
 
-A real phase change: nothing visible for 2,400 steps, then the jump happens
-in under 300 steps. Meanwhile the **1-layer control (blue) never moves** —
-after 6,000 steps it sits at 7.6%, no induction head, exactly as the theory
-demands: composition needs two layers.
+A real phase change: nothing visible for 2,400 steps, then accuracy goes
+from 10% to 50% in **275 steps**. Meanwhile the **1-layer control (blue)
+never moves** — after 6,000 steps it sits at 7.6%, no induction head,
+exactly as the theory demands: composition needs two layers.
 
-(Two honest details: the ~7% plateau accuracy is above chance (1/64 ≈ 1.6%)
+(Two honest details: the 7–9% plateau accuracy is above chance (1/64 ≈ 1.6%)
 — that's skip-trigram-ish statistics, the best a non-compositional
 strategy can do here. And control-position loss ends slightly *above*
 chance: the model pays a small confidence tax on unpredictable positions.)
+
+**Robustness**: a seed-1 replication (`--seed 1`, log committed as
+`training_log_L2s1.json`) shows the same story with shifted timing — phase
+change at steps 1,950 → 2,300 (350-step window), final accuracy 0.759, all
+four layer-1 heads again becoming induction heads in lockstep. Which
+layer-0 heads become the writers varies by seed (seed 0: two co-equal;
+seed 1: one dominant, two partial) — the roles are stable, the cast is a
+lottery. Every quantitative claim in this README is checked by
+[`verify.py`](verify.py) (33 automated checks against the raw artifacts).
 
 ## Watching the circuit assemble
 
