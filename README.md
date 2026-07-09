@@ -11,9 +11,13 @@ by Anthropic in
 [Olsson et al. 2022](https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html).
 
 This repo reproduces the phenomenon end-to-end on a laptop (~9 minutes for
-both runs), then opens the network and verifies the circuit six different
-ways — including reading both halves of it directly out of the weight
-matrices and knocking it out causally.
+both sandbox runs), then opens the network and verifies the circuit six
+different ways — including reading both halves of it directly out of the
+weight matrices and knocking it out causally. It then runs the paper's
+own methodology on real text — train on plain prose, probe at eval time
+only — where the honest laptop-scale finding is that the circuit does
+**not** emerge, for reasons the repo measures precisely:
+[the data has to make induction worth building](#the-real-thing-emergence-from-natural-text).
 
 The transformer is written from scratch in raw PyTorch tensors — no
 `nn.Module`, no `nn.Linear`, no `nn.Embedding` — in
@@ -62,7 +66,14 @@ previous-token head **wrote** (K-composition). The chain
 `E · W_QK^{ind} · (W_OV^{prev})ᵀ · Eᵀ` should behave like a same-token
 detector — big exactly on the diagonal. (It does; see below.)
 
-## The task — and why it's designed this way
+## The sandbox task — and why it's designed this way
+
+(This synthetic task plays two roles in this repo: the **sandbox runs
+train on it**, which isolates the circuit for dissection — and the
+**text runs never do**: there it appears only as an eval-time probe, the
+paper's methodology. See
+[emergence from natural text](#the-real-thing-emergence-from-natural-text)
+below.)
 
 Sequences of 128 uniform-random tokens (vocab 64), where a 24-token segment
 is copied to a **random later position**:
@@ -122,7 +133,7 @@ four layer-1 heads again becoming induction heads in lockstep. Which
 layer-0 heads become the writers varies by seed (seed 0: two co-equal;
 seed 1: one dominant, two partial) — the roles are stable, the cast is a
 lottery. Every quantitative claim in this README is checked by
-[`verify.py`](verify.py) (64 automated checks against the raw artifacts —
+[`verify.py`](verify.py) (82 automated checks against the raw artifacts —
 this run: Apple-silicon MPS, seed 0; on other backends the init draw
 differs, so head assignments and exact steps will shift while the
 structural story holds).
@@ -249,6 +260,62 @@ the model earns those extra points is an **open question in this repo** —
 a genuinely unexplained residue of the kind real interpretability work
 always leaves. If you figure it out, open an issue.
 
+## The real thing: emergence from natural text?
+
+Everything above happens where induction is the only learnable signal —
+which proves the circuit is buildable, not that it arises unprompted. So
+this repo also runs the paper's actual methodology: **train on plain text
+with plain next-token loss** — the repeated-sequence task appears only as
+an eval-time probe the model never trains on — and measure in-context
+learning the way the paper does (the **ICL score**: early-position loss
+minus late-position loss on held-out text; positive = the model predicts
+better with more context).
+
+The honest, measured answer at laptop scale: **the circuit does not
+emerge — and every failure is diagnosable.** Three regimes
+([`induction_on_text.py`](induction_on_text.py), all logs committed):
+
+| Train on | What happened | Diagnosis |
+|---|---|---|
+| chars, TinyShakespeare | learns the text (held-out loss 4.2 → 1.87) but **no induction** — probe score ≤ 0.006 and ICL ≈ 0 for all 10k steps | a repeated character carries almost no information among 65 symbols: induction has nothing to sell |
+| words, TinyShakespeare | **memorizes**: held-out loss bottoms at 4.1, then climbs *above the chance floor* to 8.2 while train loss falls to 1.7; ICL goes negative | 688K params vs 292K tokens ≈ 300 epochs — the grokking repo's failure mode, in the wild |
+| words, 8.5M-token novel corpus | healthy training (held-out 8.3 → 3.88, train–held gap 0.32), small real ICL +0.05 — and **still no induction**: probe ≤ 0.005 all run, K-composition wiring 0.7 vs the sandbox's 21 | induction doesn't pay on this data — the oracle analysis below |
+
+![text emergence](07_text_emergence.png)
+
+The third run is the informative one. The model builds every *ingredient*
+— prev-token attention and strong copying OVs (up to +1.14) — but
+assembles them into **bigram statistics, not induction**: the prev-token
+attention sits in the *last* layer (all four heads at 0.22–0.25, where it
+can vote for the previous word's usual successors but cannot feed
+composition), while layer-0 prev-token attention — the *writer* role the
+circuit needs — never exceeds 0.08. The 1-layer control reaches +0.03 ICL
+against the 2-layer's +0.05 with no possibility of composition — so most
+of the small in-context learning here is non-compositional, and the
+probes rule out induction for the rest (≤ 0.005 in both models).
+
+![half circuit](08_text_attention.png)
+
+**Why statistics instead of the algorithm? Because that's what this data
+rewards.** On held-out text, 56% of positions have a prior occurrence of
+the current word inside the window — and predicting "whatever followed it
+last time" is right only **10.8%** of the time there, while the model's
+ordinary statistical prediction is already right **28.5%** of the time on
+those very positions. Single-token induction offers 0.38× what the model
+already has. Gradient descent looked at the deal and declined.
+
+Why does the circuit famously emerge in the paper, then? Scale flips the
+economics: Olsson et al. train on BPE-tokenized web text — where a
+repeated token (one of ~50k types) is highly informative, and long
+verbatim spans (names, phrases, quotes, code) recur across far longer
+contexts — for orders of magnitude more tokens, enough for a thin margin
+to be worth wiring. Same probes, same scores, same architecture; what's
+missing at this scale is the *reward*, not the mechanism. Together, the
+sandbox and the text runs bracket the phenomenon: **the circuit forms
+exactly when the data makes it worth building** — within minutes in the
+sandbox, where induction is the only game in town; not at all across a
+million parameters' worth of novels, where statistics win.
+
 ## Takeaways
 
 - **Sudden jumps in capability can be circuit formation.** Nothing in the
@@ -264,13 +331,29 @@ always leaves. If you figure it out, open an issue.
   a theorem-shaped empirical fact.
 - **Redundancy is not a big-model disease.** Even 164K params spread the
   algorithm across 6 of 8 heads. "The circuit" is a team wherever you look.
+- **Emergence is economics, not availability.** The same architecture
+  builds the circuit in minutes when the data makes it profitable (the
+  sandbox) and declines when it doesn't (novels at laptop scale, where
+  match-and-copy earns 0.38× the model's ordinary statistics). Finding a
+  mechanism inside a large model tells you the training distribution paid
+  for it — not that the architecture demanded it.
 
 ## Run it yourself
 
 ```bash
+# the sandbox (trains on the synthetic task)
 python3 induction_from_scratch.py              # 2-layer run, ~6 min (M3 Pro, MPS)
 python3 induction_from_scratch.py --layers 1   # 1-layer control, ~3 min
-python3 analyze.py                             # all plots + numeric report
+python3 analyze.py                             # sandbox plots + numeric report
+
+# the real thing (trains on plain prose; synthetic task is eval-only)
+sh data/fetch_gutenberg.sh                     # ~36MB novel corpus (one-time)
+python3 induction_on_text.py --steps 8000      # word-level 2-layer, ~25 min
+python3 induction_on_text.py --steps 8000 --layers 1   # word 1-layer control
+python3 induction_on_text.py --tok char        # char-level null, ~15 min
+python3 induction_on_text.py --tok char --layers 1     # char 1-layer control
+python3 analyze_text.py                        # the honest-experiment plots + report
+
 python3 verify.py                              # re-checks every number in this README
 ```
 
@@ -281,15 +364,21 @@ Requirements: Python 3, PyTorch (MPS, CUDA, or CPU), matplotlib.
 | | |
 |---|---|
 | Model | 2-layer attention-only transformer, d_model 128, 4 heads (d_head 32) |
-| | learned positional embeddings, no LayerNorm, no biases — 163,840 params |
-| Data | vocab 64, seq len 128, segment len 24, random offsets, fresh every step |
-| Optimizer | AdamW, lr 1e-3, weight decay 0.01, betas (0.9, 0.98), batch 256, 6k steps |
+| | learned positional embeddings, no LayerNorm, no biases |
+| | sandbox: 163,840 params · text runs: 688,128 (word) / 180,480 (char) |
+| Sandbox data | vocab 64, seq len 128, segment len 24, random offsets, fresh every step |
+| Text data | seq len 256; last 10% held out for the ICL measurement, never trained on |
+| | word runs: ~8.5M tokens of Gutenberg novels (`data/fetch_gutenberg.sh`), |
+| | top 4,095 words + `<unk>` (92% coverage) · char runs: TinyShakespeare |
+| | (1.1M chars, committed), vocab 65 |
+| Optimizer | AdamW, lr 1e-3, weight decay 0.01, betas (0.9, 0.98) |
+| | sandbox: batch 256, 6k steps · text: batch 128, 10k steps |
 | Checkpoints | 16 log-spaced snapshots per run → `checkpoints/` |
 
-Committed: the training logs (`training_log_*.json`), so every
-learning-curve and head-score claim is checkable without retraining. Not
-tracked: `checkpoints/`, `params_*.pt`, `*.log` — all regenerated by
-training.
+Committed: the training logs (`training_log_*.json`) and the corpus, so
+every learning-curve and head-score claim is checkable without
+retraining. Not tracked: `checkpoints/`, `params_*.pt`, `*.log` — all
+regenerated by training.
 
 ## Going further
 
@@ -299,8 +388,13 @@ training.
 - **Smeared keys**: Olsson et al.'s architecture tweak — blend each key
   with the previous position's key — lets even a *one-layer* model form
   induction heads. Add it and watch the control stop being a control.
-- **Real text**: swap `make_batch` for a character-level corpus and watch
-  the same heads emerge (slower, messier — the realistic version).
+- **Chase natural emergence up the ladder**: the text experiment leaves a
+  precise recipe — raise the induction payoff until the circuit appears.
+  In order of expected effect: a repetition-rich corpus (code, wiki
+  markup — *measure the match-and-copy oracle first*; it has to beat the
+  model's statistics), BPE tokens instead of words, longer contexts, more
+  steps. `induction_on_text.py --corpus your.txt` takes any text file,
+  and `analyze_text.py` re-runs the oracle and all probes.
 - **Q-composition variant**: implement the pointer-arithmetic induction
   head (duplicate-token head + positional offset) and compare.
 

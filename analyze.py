@@ -215,7 +215,7 @@ def plot_attention_patterns(p, prev_head, ind_head,
 def token_match_matrix(p):
     H = g.N_HEADS
     E = p["W_E"]
-    eye = torch.eye(g.VOCAB, dtype=torch.bool)
+    eye = torch.eye(E.shape[0], dtype=torch.bool)   # vocab-size agnostic
     comp = torch.zeros(H, H)
     for h1 in range(H):
         W_OV1 = p["W_V0"][h1] @ p["W_O0"][h1]          # (D, D) write of L0 head
@@ -279,7 +279,7 @@ def plot_same_token_detector(p, prev_head, ind_head,
         return
     D = same_token_detector(p, prev_head, ind_head)
     diag = D.diagonal()
-    off = D[~torch.eye(g.VOCAB, dtype=torch.bool)]
+    off = D[~torch.eye(D.shape[0], dtype=torch.bool)]
     plt.figure(figsize=(6, 5))
     plt.imshow(D.numpy(), cmap="RdBu_r",
                vmin=-D.abs().max(), vmax=D.abs().max())
@@ -369,7 +369,7 @@ def copying_matrix(p, l, h):
 def copy_scores(p):
     """Diagonal advantage (mean diag − mean off-diag) of the copying matrix,
     per head. ≈ 0 for annotators, strongly positive for copiers."""
-    eye = torch.eye(g.VOCAB, dtype=torch.bool)
+    eye = torch.eye(p["W_E"].shape[0], dtype=torch.bool)
     out = []
     for l in range(n_layers_from(p)):
         row = []
@@ -393,7 +393,7 @@ def plot_copying(p, ind_head, save_to="06_copying.png"):
     axes[0].set_ylabel("attended token (X)")
     axes[0].set_title(f"Copying matrix E·W_OV·W_U, head {ind_head}\n"
                       f"diag {M.diagonal().mean():.2f} vs "
-                      f"off-diag {M[~torch.eye(g.VOCAB, dtype=torch.bool)].mean():.2f}")
+                      f"off-diag {M[~torch.eye(M.shape[0], dtype=torch.bool)].mean():.2f}")
 
     labels = [f"{l}.{h}" for l in range(len(scores)) for h in range(g.N_HEADS)]
     vals = [v for row in scores for v in row]

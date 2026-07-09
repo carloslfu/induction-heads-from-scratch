@@ -11,6 +11,7 @@ Exit code 0 iff all checks pass.
 
 import json
 import math
+import os
 import sys
 
 import torch
@@ -152,6 +153,64 @@ def main():
     check("early-region prev attention", early, 0.5, 1.0)
     check("late-region prev attention", late, 0.0, 0.25)
     check("early/late ratio", early / max(late, 1e-9), 3, 100, "{:.1f}")
+
+    print("\n-- Text runs: the honest emergence experiment --")
+
+    def tload(tag):
+        path = f"training_log_{tag}.json"
+        if not os.path.exists(path):
+            return None
+        with open(path) as fh:
+            return json.load(fh)
+
+    t2c, t1c = tload("T2"), tload("T1")
+    t2w, t1w, t2wt = tload("T2w"), tload("T1w"), tload("T2w_tiny")
+    if not all((t2c, t2w, t1w, t2wt)):
+        print("  (skipped: text logs missing — run induction_on_text.py)")
+    else:
+        check("char 2L learns the text (held-out final)",
+              t2c[-1]["held_loss"], 1.6, 2.0)
+        check("char 2L: no induction head ever (max probe score)",
+              max(max(r["ind"][-1]) for r in t2c), 0, 0.02)
+        check("char 2L: no in-context learning (|final ICL|)",
+              abs(t2c[-1]["icl"]), 0, 0.07)
+        check("word-on-TinyShakespeare memorizes: held-out ends above chance",
+              t2wt[-1]["held_loss"], 7.63, 9.0)
+        check("word-on-TinyShakespeare: train-held gap",
+              t2wt[-1]["held_loss"] - t2wt[-1]["train_loss"], 5.0, 8.0)
+        check("word-on-TinyShakespeare: ICL goes negative",
+              t2wt[-1]["icl"], -0.8, -0.3)
+        check("word 2L (novels): healthy held-out loss",
+              t2w[-1]["held_loss"], 3.7, 4.0)
+        check("word 2L: no memorization (train-held gap)",
+              t2w[-1]["held_loss"] - t2w[-1]["train_loss"], 0.0, 0.6)
+        check("word 2L: small real ICL", t2w[-1]["icl"], 0.02, 0.10)
+        check("word 2L: STILL no induction head (max probe score ever)",
+              max(max(r["ind"][-1]) for r in t2w), 0, 0.02)
+        check("word 2L: prev-token attention sits in the LAST layer",
+              min(t2w[-1]["prev"][1]), 0.18, 0.35)
+        check("word 2L: the layer-0 writer role never forms",
+              max(t2w[-1]["prev"][0]), 0, 0.12)
+        check("word 1L control: same ICL without composition (|Δ| vs 2L)",
+              abs(t1w[-1]["icl"] - t2w[-1]["icl"]), 0, 0.05)
+        if os.path.exists("params_T2w.pt") and \
+           os.path.exists("data/gutenberg.txt"):
+            import analyze_text as at
+            pw = analyze.load_params("params_T2w.pt")
+            comp_w = analyze.token_match_matrix(pw)
+            check("word 2L: no K-composition wiring (max, sandbox has ~21)",
+                  comp_w.max().item(), -2, 2)
+            cs_w = analyze.copy_scores(pw)
+            check("word 2L: copier heads exist (max L1 copy score)",
+                  max(cs_w[1]), 0.5, 2.0)
+            oracle, model_acc, _ = at.oracle_analysis(pw)
+            check("oracle: match-and-copy accuracy on repeated words",
+                  oracle, 0.08, 0.14)
+            check("oracle: model's statistics beat induction (ratio)",
+                  model_acc / oracle, 2.0, 4.0)
+            vivo = at.in_vivo_induction(pw)
+            check("word 2L: no in-vivo induction on real text (max attn)",
+                  max(max(r) for r in vivo), 0, 0.05)
 
     print("\n-- Matcher ceilings --")
     res = analyze.matching_ceiling()
