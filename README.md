@@ -11,9 +11,9 @@ by Anthropic in
 [Olsson et al. 2022](https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html).
 
 This repo reproduces the phenomenon end-to-end on a laptop (~9 minutes for
-both runs), then opens the network and verifies the circuit five different
-ways — including reading it directly out of the weight matrices and
-knocking it out causally.
+both runs), then opens the network and verifies the circuit six different
+ways — including reading both halves of it directly out of the weight
+matrices and knocking it out causally.
 
 The transformer is written from scratch in raw PyTorch tensors — no
 `nn.Module`, no `nn.Linear`, no `nn.Embedding` — in
@@ -122,7 +122,7 @@ four layer-1 heads again becoming induction heads in lockstep. Which
 layer-0 heads become the writers varies by seed (seed 0: two co-equal;
 seed 1: one dominant, two partial) — the roles are stable, the cast is a
 lottery. Every quantitative claim in this README is checked by
-[`verify.py`](verify.py) (55 automated checks against the raw artifacts —
+[`verify.py`](verify.py) (64 automated checks against the raw artifacts —
 this run: Apple-silicon MPS, seed 0; on other backends the init draw
 differs, so head assignments and exact steps will shift while the
 structural story holds).
@@ -139,7 +139,9 @@ Read the four panels together and the story is precise:
 
 - **Roles are layer-bound**: layer-0 heads develop previous-token behavior,
   layer-1 heads develop induction behavior, never the reverse. (The reverse
-  is impossible: the note must be written before it can be read.)
+  is impossible: the note must be written before it can be read. Measured
+  across the entire run: no layer-0 head's induction score ever exceeds
+  0.02, no layer-1 head's prev-token score 0.04.)
 - **Both parts form simultaneously at the phase change** (~step 2,400–3,000)
   — the writer and reader co-evolve; neither is useful alone.
 - **The circuit is a team, not a pair**: heads 0.0 *and* 0.3 both become
@@ -161,7 +163,10 @@ One example sequence (green = first copy of the segment, red = second):
   annotating them. Gradient economy, visible to the naked eye.
 - **Induction head 1.1**: from the red queries (second copy), a sharp
   diagonal band inside the green key columns, offset by one — attending
-  exactly to "just after the previous occurrence."
+  exactly to "just after the previous occurrence." And *exactly* means
+  exactly: mean attention to the true target `p1+j+1` is 0.44, versus
+  0.009 one position earlier or later — the correct offset gets ~50× its
+  neighbors.
 
 ## The circuit, read from the weights alone
 
@@ -183,6 +188,24 @@ strongest pair:
 A blazing diagonal: **+20.1** on the diagonal vs **−0.46** off it. The
 induction mechanism, written in the weights, extracted with three matrix
 multiplications. No forward pass required.
+
+## The other half of the definition: copying
+
+Matching is only half of what "induction head" means. Olsson et al.'s
+definition has two clauses: the head must attend to the token after the
+previous occurrence (**prefix matching** — verified above), and its output
+must *raise the logit of the token it attends to* (**copying**). The copy
+circuit is also readable straight from the weights:
+`E · W_OV^{head} · W_U` says which output logits rise when a head attends
+to token X.
+
+![copying](06_copying.png)
+
+Every layer-1 head is a copier (diagonal advantage +0.62 to +0.71) and no
+layer-0 head is (all ≈ −0.1). The division of labor is exact: layer 0
+annotates the residual stream and layer 1 writes to the output. Match and
+copy, both halves verified in the weights — these are induction heads in
+the full textbook sense.
 
 ## The causal test: ablations
 
@@ -229,9 +252,11 @@ always leaves. If you figure it out, open an issue.
 ## Takeaways
 
 - **Sudden jumps in capability can be circuit formation.** Nothing in the
-  loss curve hints at what's coming until it comes. Watching per-head
-  scores (cheap!) shows the transition as it happens — the measurement
-  lesson from the [grokking repo](https://github.com/carloslfu/grokking-from-scratch),
+  loss curve hints at what's coming: the 2-layer loss first separates from
+  the 1-layer control at step ~2,400 — when the jump is already underway.
+  Watching per-head scores (cheap!) shows the transition as it happens,
+  and names the mechanism — the measurement lesson from the
+  [grokking repo](https://github.com/carloslfu/grokking-from-scratch),
   again.
 - **Composition is the point of depth.** One layer can only match on raw
   token/position; two layers can match on *computed* properties. In-context

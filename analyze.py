@@ -14,6 +14,8 @@ Produces .png plots and prints numeric summaries:
       read by which layer-1 head's keys (same-token matching strength)
   04  same-token detector: E · W_QK^ind · (W_OV^prev)^T · E^T ≈ diagonal
   05  ablation: zero each head, measure induction accuracy — causal test
+  06  copying: E · W_OV^head · W_U ≈ diagonal for layer-1 heads — the
+      second half of the induction-head definition (match AND copy)
 
 Everything runs in seconds on CPU/MPS.
 """
@@ -351,6 +353,89 @@ def plot_ablations(p, prev_head, ind_head, save_to="05_ablation.png"):
 
 
 # -----------------------------------------------------------------------------
+# 06 — Copying: the OV half of the induction-head definition
+#
+# An induction head must do two things (Olsson et al.): attend to the token
+# after the previous occurrence (prefix matching — plots 03/04), and COPY:
+# its output must raise the logit of the token it attends to. That is also
+# readable from the weights: M = E · W_OV^{l,h} · W_U is (V × V); M[X, Y]
+# is how much attending to token X moves logit Y. Copier ⇔ diagonal-heavy.
+# -----------------------------------------------------------------------------
+def copying_matrix(p, l, h):
+    return (p["W_E"] @ (p[f"W_V{l}"][h] @ p[f"W_O{l}"][h])
+            @ p["W_U"]).detach().cpu()
+
+
+def copy_scores(p):
+    """Diagonal advantage (mean diag − mean off-diag) of the copying matrix,
+    per head. ≈ 0 for annotators, strongly positive for copiers."""
+    eye = torch.eye(g.VOCAB, dtype=torch.bool)
+    out = []
+    for l in range(n_layers_from(p)):
+        row = []
+        for h in range(g.N_HEADS):
+            M = copying_matrix(p, l, h)
+            row.append((M.diagonal().mean() - M[~eye].mean()).item())
+        out.append(row)
+    return out
+
+
+def plot_copying(p, ind_head, save_to="06_copying.png"):
+    scores = copy_scores(p)
+    il, ih = (int(v) for v in ind_head.split("."))
+    M = copying_matrix(p, il, ih)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6))
+    im = axes[0].imshow(M.numpy(), cmap="RdBu_r",
+                        vmin=-M.abs().max(), vmax=M.abs().max())
+    fig.colorbar(im, ax=axes[0], label="logit contribution")
+    axes[0].set_xlabel("output logit (token Y)")
+    axes[0].set_ylabel("attended token (X)")
+    axes[0].set_title(f"Copying matrix E·W_OV·W_U, head {ind_head}\n"
+                      f"diag {M.diagonal().mean():.2f} vs "
+                      f"off-diag {M[~torch.eye(g.VOCAB, dtype=torch.bool)].mean():.2f}")
+
+    labels = [f"{l}.{h}" for l in range(len(scores)) for h in range(g.N_HEADS)]
+    vals = [v for row in scores for v in row]
+    colors = ["#94a3b8"] * g.N_HEADS + ["#16a34a"] * g.N_HEADS
+    axes[1].bar(labels, vals, color=colors[:len(vals)])
+    axes[1].axhline(0, color="gray", lw=1)
+    axes[1].set_ylabel("copy score (diag − off-diag)")
+    axes[1].set_title("Copying is a layer-1 behavior only:\n"
+                      "layer 0 annotates, layer 1 copies")
+    axes[1].grid(alpha=0.3, axis="y")
+
+    plt.tight_layout()
+    plt.savefig(save_to, dpi=130)
+    plt.close()
+    print(f"  saved {save_to}")
+    for l, row in enumerate(scores):
+        print(f"  layer {l} copy scores: "
+              + "  ".join(f"{l}.{h}: {v:+.2f}" for h, v in enumerate(row)))
+    return scores
+
+
+def induction_offset_profile(p, offsets=(0, 1, 2)):
+    """Mean layer-1 attention from induction queries (p2+j) to p1+j+k for
+    each offset k. The circuit predicts a spike exactly at k = 1."""
+    x, p1, p2 = eval_batch()
+    with torch.no_grad():
+        _, attns = g.forward(p, x, want_attn=True)
+    B = x.shape[0]
+    ar = torch.arange(g.SEG_LEN - 1, device=x.device)
+    qpos = p2[:, None] + ar[None, :]
+    bi = torch.arange(B, device=x.device)[:, None].expand_as(qpos)
+    prof = {}
+    for k in offsets:
+        tpos = p1[:, None] + ar[None, :] + k
+        prof[k] = [attns[-1][bi, h, qpos, tpos].mean().item()
+                   for h in range(g.N_HEADS)]
+        print(f"  attn to p1+j+{k}: "
+              + "  ".join(f"{v:.3f}" for v in prof[k]))
+    return prof
+
+
+# -----------------------------------------------------------------------------
 # Theoretical ceiling for a single-token matcher
 #
 # The model's strategy matches on ONE previous token. With random tokens,
@@ -484,6 +569,11 @@ def main():
 
     print("\nAblations (causal test):")
     plot_ablations(p, prev_head, ind_head)
+
+    print("\nCopying (the OV half of the definition):")
+    plot_copying(p, ind_head)
+    print("\nInduction-target offset profile (layer-1 attention):")
+    induction_offset_profile(p)
 
     print("\nOpen-question probes (depth accuracy, two-back attention):")
     depth_accuracy(p)

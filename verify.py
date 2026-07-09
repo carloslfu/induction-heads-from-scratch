@@ -84,6 +84,17 @@ def main():
     check("rise simultaneity |Δ| steps", abs(prev_rise - ind_rise),
           0, 300, "{:.0f}")
 
+    print("\n-- Role purity across the whole run --")
+    check("max L0 induction score ever (roles never reverse)",
+          max(max(r["ind"][0]) for r in log2), 0, 0.05)
+    check("max L1 prev-token score ever",
+          max(max(r["prev"][1]) for r in log2), 0, 0.06)
+    by1 = {r["step"]: r["ind_loss"] for r in log1}
+    sep = next(r["step"] for r in log2
+               if r["step"] in by1 and by1[r["step"]] - r["ind_loss"] > 0.1)
+    check("2L loss first separates from 1L control at the jump itself",
+          sep, 2300, 2600, "{:.0f}")
+
     print("\n-- Weights-level circuit (params_L2.pt) --")
     p = analyze.load_params("params_L2.pt")
     n = sum(t.numel() for t in p.values())
@@ -99,6 +110,18 @@ def main():
     check("wiring: writer 0.3 → readers (min)", comp[:, 3].min().item(), 18, 24)
     check("wiring: writer 0.1 (max, ≈none)", comp[:, 1].max().item(), 0, 1.5)
     check("wiring: writer 0.2 (max, weak)", comp[:, 2].max().item(), 3, 8)
+
+    print("\n-- Copying: the OV half of the induction-head definition --")
+    cs = analyze.copy_scores(p)
+    check("all four L1 heads copy (min diag advantage)", min(cs[1]), 0.55, 0.85)
+    check("best ind head 1.1 copy score", cs[1][1], 0.63, 0.78)
+    check("no L0 head copies (max |advantage|)",
+          max(abs(v) for v in cs[0]), 0, 0.15)
+    prof = analyze.induction_offset_profile(p)
+    check("attn at the exact target p1+j+1 (min over L1 heads)",
+          min(prof[1]), 0.42, 0.50)
+    check("attn one position early, p1+j (max)", max(prof[0]), 0, 0.02)
+    check("attn one position late, p1+j+2 (max)", max(prof[2]), 0, 0.02)
 
     print("\n-- Behavioral eval (fresh forward passes) --")
     base = analyze.ablated_accuracy(p, [])
