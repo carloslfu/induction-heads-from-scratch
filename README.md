@@ -365,6 +365,31 @@ worth of novels, where statistics win the race for the budget.
   forms at all. A mechanism inside a large model means the training run
   cleared both bars: data that paid for it, and enough budget to build it.
 
+## Same story as grokking — a different opponent
+
+The companion repo, [grokking-from-scratch](https://github.com/carloslfu/grokking-from-scratch),
+catches the same event in a different costume: a network that looks stuck
+suddenly "gets" an algorithm, because a cooperative circuit — parts that
+are useless alone — finished assembling in the dark. There it's a Fourier
+circuit for modular arithmetic; here it's a writer–reader pair for
+copying. In both, the jump is sudden only at the output; inside, the
+assembly is visible long before (per-head scores here, frequency shares
+there — the same measurement lesson twice).
+
+What differs is the *opponent* — what the circuit must beat for the
+training budget:
+
+| Setting | Opponent | Outcome |
+|---|---|---|
+| grokking | memorization gets there first; weight decay taxes it to death | the algorithm evicts the squatter — slowly |
+| induction, sandbox | none: fresh random data leaves induction as the only earner | the algorithm moves into an empty house |
+| induction, real text | honest statistics that out-earn copying ~2.6-to-1 | the algorithm never gets funded — and no referee can fix a fair loss; only different data can |
+
+That last cell is the deep asymmetry: grokking's shortcut is a parasite
+(it doesn't generalize), so an indiscriminate tax kills it while sparing
+the circuit. Real text's statistics *do* generalize — they are the right
+answer for that data — so no optimizer trick will ever evict them.
+
 ## Run it yourself
 
 ```bash
