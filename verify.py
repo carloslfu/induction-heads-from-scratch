@@ -217,6 +217,14 @@ def main():
                   "still pre-transition", vq[-1]["ind_acc"], 0, 0.02)
             check("geometry control ends barely below chance (ln 4096)",
                   vq[-1]["ind_loss"], 8.20, 8.318)
+        if os.path.exists("params_T2.pt") and \
+           os.path.exists("data/tinyshakespeare.txt"):
+            import analyze_text as at_c
+            p2c = analyze.load_params("params_T2.pt")
+            oc, mc, _, _ = at_c.oracle_analysis(p2c, tok="char")
+            check("char oracle: match-and-copy accuracy", oc, 0.13, 0.18)
+            check("char oracle: statistics beat copying (ratio)",
+                  mc / oc, 2.5, 3.5)
         if os.path.exists("params_T2w.pt") and \
            os.path.exists("data/gutenberg.txt"):
             import analyze_text as at

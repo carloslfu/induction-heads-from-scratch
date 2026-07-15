@@ -133,7 +133,7 @@ four layer-1 heads again becoming induction heads in lockstep. Which
 layer-0 heads become the writers varies by seed (seed 0: two co-equal;
 seed 1: one dominant, two partial) — the roles are stable, the cast is a
 lottery. Every quantitative claim in this README is checked by
-[`verify.py`](verify.py) (90 automated checks against the raw artifacts —
+[`verify.py`](verify.py) (92 automated checks against the raw artifacts —
 this run: Apple-silicon MPS, seed 0; on other backends the init draw
 differs, so head assignments and exact steps will shift while the
 structural story holds).
@@ -277,7 +277,7 @@ emerge — and every failure is diagnosable.** Three regimes
 
 | Train on | What happened | Diagnosis |
 |---|---|---|
-| chars, TinyShakespeare | learns the text (held-out loss 4.2 → 1.87) but **no induction** — probe score ≤ 0.006 and ICL ≈ 0 for all 10k steps | a repeated character carries almost no information among 65 symbols: induction has nothing to sell |
+| chars, TinyShakespeare | learns the text (held-out loss 4.2 → 1.87) but **no induction** — probe score ≤ 0.006 and ICL ≈ 0 for all 10k steps | copying a repeated character barely pays: the match-and-copy oracle gets 15.6% where the model's statistics already get 45.4% (0.34×) |
 | words, TinyShakespeare | **memorizes**: held-out loss bottoms at 4.1, then climbs *above the chance floor* to 8.2 while train loss falls to 1.7; ICL goes negative | 688K params vs 292K tokens ≈ 300 epochs — the grokking repo's failure mode, in the wild |
 | words, 8.5M-token novel corpus | healthy training (held-out 8.3 → 3.88, train–held gap 0.32), small real ICL +0.05 — and **still no induction**: probe ≤ 0.005 all run, K-composition wiring 0.7 vs the sandbox's 21 | induction barely pays on this data (oracle below) — and at word-scale vocabularies the circuit's formation clock is long (vocab controls below) |
 
@@ -287,8 +287,8 @@ The third run is the informative one. The model builds every *ingredient*
 — prev-token attention and strong copying OVs (up to +1.14) — but
 assembles them into **bigram statistics, not induction**: the prev-token
 attention sits in the *last* layer (all four heads at 0.22–0.25, where it
-can vote for the previous word's usual successors but cannot feed
-composition), while layer-0 prev-token attention — the *writer* role the
+converts the previous word directly into next-word statistics but cannot
+feed composition), while layer-0 prev-token attention — the *writer* role the
 circuit needs — never exceeds 0.08. The 1-layer control reaches +0.03 ICL
 against the 2-layer's +0.05 with no possibility of composition — so most
 of the small in-context learning here is non-compositional, and the
@@ -316,16 +316,18 @@ economics are beside the point? Three controls on the pure sandbox task
 answer that (same architecture; only the signal differs — in the sandbox,
 induction is the whole game). First: vocabulary is a formation **clock,
 not a wall** — the phase change lands at ~2.7k steps for vocab 64, ~5.3k
-for 512, ~7.9k for 4,096 (reproduce with `--vocab`), and larger
-vocabularies actually finish *cleaner* (0.94–0.96 final accuracy vs 0.75
-— fewer matching collisions). Second: run the pure signal at the text
+for 512, ~7.9k for 4,096 (reproduce with `--vocab`; single-seed timings,
+but seed jitter on this clock is ~±400 steps — small against the ~2.6k
+gaps between vocab points), and larger vocabularies actually finish
+*cleaner* (0.94–0.96 final accuracy vs 0.75 — fewer matching collisions). Second: run the pure signal at the text
 run's *exact* geometry and budget (vocab 4,096, context 256, batch 128,
 8k steps — about half the per-step supervision of the canonical clock)
 and it ends **still pre-transition, at chance**. So the text run failed
 twice over, and both causes are controlled: its budget sat below the
 formation clock *even for a perfectly-paid signal* — and its actual pay
 was 0.38×, which is why its probes never left the floor at all while the
-pure-signal control at least drifts.
+pure-signal control drifts monotonically toward the transition
+(8.320 → 8.314 across the run).
 
 Why does the circuit famously emerge in the paper, then? Scale moves
 both levers at once. *Reward*: BPE web text makes a repeated token (one
