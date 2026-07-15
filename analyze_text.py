@@ -178,7 +178,7 @@ def oracle_analysis(p, tok="word", n=128):
         logits = g.forward(p, hx.to(g.DEVICE))
     pred = logits[:, :-1].argmax(-1).cpu()
 
-    match_pos = model_ok = oracle_ok = 0
+    match_pos = model_ok = oracle_ok = oracle_only = 0
     for b in range(n):
         seq = hx[b].tolist()
         last = {}
@@ -186,18 +186,25 @@ def oracle_analysis(p, tok="word", n=128):
             w = seq[t]
             if w in last:
                 match_pos += 1
-                oracle_ok += (seq[last[w] + 1] == seq[t + 1])
-                model_ok += (pred[b, t].item() == seq[t + 1])
+                o = seq[last[w] + 1] == seq[t + 1]
+                m = pred[b, t].item() == seq[t + 1]
+                oracle_ok += o
+                model_ok += m
+                oracle_only += o and not m
             last[w] = t
     frac = match_pos / (n * (tx.SEQ_LEN - 1))
     oracle = oracle_ok / match_pos
     model = model_ok / match_pos
+    margin = oracle_only / (n * (tx.SEQ_LEN - 1))
     print(f"  positions with a prior occurrence of the current word: {frac:.0%}")
     print(f"  match-and-copy oracle accuracy there: {oracle:.3f}")
     print(f"  the model's accuracy on those same positions: {model:.3f}")
-    print(f"  -> induction's best case is {oracle/model:.2f}x the statistics "
-          f"the model already has: it does not pay on this data")
-    return oracle, model, frac
+    print(f"  unexploited margin (oracle right, model wrong): "
+          f"{margin:.1%} of all positions")
+    print(f"  -> as a replacement, induction offers {oracle/model:.2f}x the "
+          f"statistics the model already has; as an addition, a "
+          f"{margin:.1%} margin — thin either way")
+    return oracle, model, frac, margin
 
 
 def in_vivo_induction(p, tok="word", n=64):

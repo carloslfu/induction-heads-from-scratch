@@ -58,6 +58,7 @@ D_HEAD     = D_MODEL // N_HEADS   # 32
 N_LAYERS   = 2           # override with --layers 1 for the control
 
 BATCH      = 256
+EVAL_BATCH = 512
 LR         = 1e-3
 WD         = 0.01
 BETAS      = (0.9, 0.98)
@@ -79,8 +80,12 @@ DEVICE = (
 
 
 def run_tag(n_layers, seed=SEED):
-    # seed 0 is the canonical run; other seeds get distinct artifact names
-    return f"L{n_layers}" + (f"s{seed}" if seed != SEED else "")
+    # seed 0 / default geometry is the canonical run; variants get distinct
+    # artifact names (e.g. L2v4096q256 for the vocab-4096 capacity control)
+    return (f"L{n_layers}"
+            + (f"v{VOCAB}" if VOCAB != 64 else "")
+            + (f"q{SEQ_LEN}" if SEQ_LEN != 128 else "")
+            + (f"s{seed}" if seed != SEED else ""))
 
 
 # -----------------------------------------------------------------------------
@@ -248,7 +253,7 @@ def train(n_layers=N_LAYERS, n_steps=N_STEPS, seed=SEED):
 
     # fixed eval batch (own generator → same eval data for every run/step)
     ge = torch.Generator().manual_seed(10_000 + seed)
-    ex, ep1, ep2 = make_batch(512, generator=ge)
+    ex, ep1, ep2 = make_batch(EVAL_BATCH, generator=ge)
     ex, ep1, ep2 = ex.to(DEVICE), ep1.to(DEVICE), ep2.to(DEVICE)
     emask = induction_mask(ep1.cpu(), ep2.cpu()).to(DEVICE)
 
@@ -305,5 +310,14 @@ if __name__ == "__main__":
     ap.add_argument("--layers", type=int, default=N_LAYERS)
     ap.add_argument("--steps", type=int, default=N_STEPS)
     ap.add_argument("--seed", type=int, default=SEED)
+    # geometry overrides — e.g. the vocab-clock controls (--vocab 512,
+    # --vocab 4096) and the pure-signal control at the text run's exact
+    # geometry: --vocab 4096 --seq 256 --batch 128 --eval-batch 128
+    ap.add_argument("--vocab", type=int, default=VOCAB)
+    ap.add_argument("--seq", type=int, default=SEQ_LEN)
+    ap.add_argument("--batch", type=int, default=BATCH)
+    ap.add_argument("--eval-batch", type=int, default=EVAL_BATCH)
     args = ap.parse_args()
+    VOCAB, SEQ_LEN = args.vocab, args.seq
+    BATCH, EVAL_BATCH = args.batch, args.eval_batch
     train(n_layers=args.layers, n_steps=args.steps, seed=args.seed)

@@ -193,6 +193,30 @@ def main():
               max(t2w[-1]["prev"][0]), 0, 0.12)
         check("word 1L control: same ICL without composition (|Δ| vs 2L)",
               abs(t1w[-1]["icl"] - t2w[-1]["icl"]), 0, 0.05)
+
+        # the vocab-clock controls: pure sandbox signal, only vocab changed
+        v512, v4096 = tload("L2v512"), tload("L2v4096")
+        if v512 and v4096:
+            def t50_of(lg):
+                return next((r["step"] for r in lg if r["ind_acc"] > 0.5),
+                            None)
+            check("vocab clock: 512 forms (final acc)",
+                  v512[-1]["ind_acc"], 0.93, 1.0)
+            check("vocab clock: 512 phase change ~5.3k",
+                  t50_of(v512), 5_100, 5_500, "{:.0f}")
+            check("vocab clock: 4096 forms too — a clock, not a wall",
+                  v4096[-1]["ind_acc"], 0.90, 1.0)
+            check("vocab clock: 4096 phase change ~7.9k",
+                  t50_of(v4096), 7_700, 8_000, "{:.0f}")
+            check("vocab clock is monotone: 64 < 512 < 4096",
+                  1.0 if 2_725 < t50_of(v512) < t50_of(v4096) else 0.0,
+                  1, 1, "{:.0f}")
+        vq = tload("L2v4096q256")
+        if vq:
+            check("pure signal at the text run's exact geometry/budget: "
+                  "still pre-transition", vq[-1]["ind_acc"], 0, 0.02)
+            check("geometry control ends barely below chance (ln 4096)",
+                  vq[-1]["ind_loss"], 8.20, 8.318)
         if os.path.exists("params_T2w.pt") and \
            os.path.exists("data/gutenberg.txt"):
             import analyze_text as at
@@ -203,11 +227,13 @@ def main():
             cs_w = analyze.copy_scores(pw)
             check("word 2L: copier heads exist (max L1 copy score)",
                   max(cs_w[1]), 0.5, 2.0)
-            oracle, model_acc, _ = at.oracle_analysis(pw)
+            oracle, model_acc, _, margin = at.oracle_analysis(pw)
             check("oracle: match-and-copy accuracy on repeated words",
                   oracle, 0.08, 0.14)
             check("oracle: model's statistics beat induction (ratio)",
                   model_acc / oracle, 2.0, 4.0)
+            check("oracle: unexploited margin is thin (frac of all tokens)",
+                  margin, 0.015, 0.04)
             vivo = at.in_vivo_induction(pw)
             check("word 2L: no in-vivo induction on real text (max attn)",
                   max(max(r) for r in vivo), 0, 0.05)

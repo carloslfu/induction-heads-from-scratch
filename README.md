@@ -17,7 +17,7 @@ weight matrices and knocking it out causally. It then runs the paper's
 own methodology on real text — train on plain prose, probe at eval time
 only — where the honest laptop-scale finding is that the circuit does
 **not** emerge, for reasons the repo measures precisely:
-[the data has to make induction worth building](#the-real-thing-emergence-from-natural-text).
+[the data has to pay for the circuit, and the model has to be able to build it](#the-real-thing-emergence-from-natural-text).
 
 The transformer is written from scratch in raw PyTorch tensors — no
 `nn.Module`, no `nn.Linear`, no `nn.Embedding` — in
@@ -133,7 +133,7 @@ four layer-1 heads again becoming induction heads in lockstep. Which
 layer-0 heads become the writers varies by seed (seed 0: two co-equal;
 seed 1: one dominant, two partial) — the roles are stable, the cast is a
 lottery. Every quantitative claim in this README is checked by
-[`verify.py`](verify.py) (82 automated checks against the raw artifacts —
+[`verify.py`](verify.py) (90 automated checks against the raw artifacts —
 this run: Apple-silicon MPS, seed 0; on other backends the init draw
 differs, so head assignments and exact steps will shift while the
 structural story holds).
@@ -279,7 +279,7 @@ emerge — and every failure is diagnosable.** Three regimes
 |---|---|---|
 | chars, TinyShakespeare | learns the text (held-out loss 4.2 → 1.87) but **no induction** — probe score ≤ 0.006 and ICL ≈ 0 for all 10k steps | a repeated character carries almost no information among 65 symbols: induction has nothing to sell |
 | words, TinyShakespeare | **memorizes**: held-out loss bottoms at 4.1, then climbs *above the chance floor* to 8.2 while train loss falls to 1.7; ICL goes negative | 688K params vs 292K tokens ≈ 300 epochs — the grokking repo's failure mode, in the wild |
-| words, 8.5M-token novel corpus | healthy training (held-out 8.3 → 3.88, train–held gap 0.32), small real ICL +0.05 — and **still no induction**: probe ≤ 0.005 all run, K-composition wiring 0.7 vs the sandbox's 21 | induction doesn't pay on this data — the oracle analysis below |
+| words, 8.5M-token novel corpus | healthy training (held-out 8.3 → 3.88, train–held gap 0.32), small real ICL +0.05 — and **still no induction**: probe ≤ 0.005 all run, K-composition wiring 0.7 vs the sandbox's 21 | induction barely pays on this data (oracle below) — and at word-scale vocabularies the circuit's formation clock is long (vocab controls below) |
 
 ![text emergence](07_text_emergence.png)
 
@@ -301,20 +301,43 @@ rewards.** On held-out text, 56% of positions have a prior occurrence of
 the current word inside the window — and predicting "whatever followed it
 last time" is right only **10.8%** of the time there, while the model's
 ordinary statistical prediction is already right **28.5%** of the time on
-those very positions. Single-token induction offers 0.38× what the model
-already has. Gradient descent looked at the deal and declined.
+those very positions. As a replacement, induction offers 0.38× what the
+model already has; as an addition, the unexploited margin — positions
+where copying is right and the statistics are wrong — is just **2.6% of
+all tokens**. Gradient descent looked at the deal and declined. (We
+hunted for a hidden trace anyway: attention from repeated *rare* words to
+their previous occurrence's neighborhood is slightly elevated, but
+equally at offsets 0, +1, and +2 — diffuse salience, not matching. A real
+induction head spikes at +1: 0.44 vs 0.009 in the sandbox.)
 
-Why does the circuit famously emerge in the paper, then? Scale flips the
-economics: Olsson et al. train on BPE-tokenized web text — where a
-repeated token (one of ~50k types) is highly informative, and long
-verbatim spans (names, phrases, quotes, code) recur across far longer
-contexts — for orders of magnitude more tokens, enough for a thin margin
-to be worth wiring. Same probes, same scores, same architecture; what's
-missing at this scale is the *reward*, not the mechanism. Together, the
-sandbox and the text runs bracket the phenomenon: **the circuit forms
-exactly when the data makes it worth building** — within minutes in the
-sandbox, where induction is the only game in town; not at all across a
-million parameters' worth of novels, where statistics win.
+**Checked by trying to prove ourselves wrong.** Maybe the model simply
+*couldn't* build the circuit at a 4,096-token vocabulary, and the
+economics are beside the point? Three controls on the pure sandbox task
+answer that (same architecture; only the signal differs — in the sandbox,
+induction is the whole game). First: vocabulary is a formation **clock,
+not a wall** — the phase change lands at ~2.7k steps for vocab 64, ~5.3k
+for 512, ~7.9k for 4,096 (reproduce with `--vocab`), and larger
+vocabularies actually finish *cleaner* (0.94–0.96 final accuracy vs 0.75
+— fewer matching collisions). Second: run the pure signal at the text
+run's *exact* geometry and budget (vocab 4,096, context 256, batch 128,
+8k steps — about half the per-step supervision of the canonical clock)
+and it ends **still pre-transition, at chance**. So the text run failed
+twice over, and both causes are controlled: its budget sat below the
+formation clock *even for a perfectly-paid signal* — and its actual pay
+was 0.38×, which is why its probes never left the floor at all while the
+pure-signal control at least drifts.
+
+Why does the circuit famously emerge in the paper, then? Scale moves
+both levers at once. *Reward*: BPE web text makes a repeated token (one
+of ~50k types) highly informative, and long verbatim spans (names,
+phrases, quotes, code) recur across far longer contexts. *Budget*: orders
+of magnitude more training than any formation clock measured here —
+enough to wire even a thin margin. Same probes, same scores, same
+architecture. Together, the sandbox and the text runs bracket the
+phenomenon: **the circuit forms when the data pays for it and the budget
+clears its formation clock** — minutes in the sandbox, where induction is
+the only game in town; never within these runs on a million parameters'
+worth of novels, where statistics win the race for the budget.
 
 ## Takeaways
 
@@ -331,12 +354,14 @@ million parameters' worth of novels, where statistics win.
   a theorem-shaped empirical fact.
 - **Redundancy is not a big-model disease.** Even 164K params spread the
   algorithm across 6 of 8 heads. "The circuit" is a team wherever you look.
-- **Emergence is economics, not availability.** The same architecture
-  builds the circuit in minutes when the data makes it profitable (the
-  sandbox) and declines when it doesn't (novels at laptop scale, where
-  match-and-copy earns 0.38× the model's ordinary statistics). Finding a
-  mechanism inside a large model tells you the training distribution paid
-  for it — not that the architecture demanded it.
+- **Emergence needs the reward, and time on the clock — both are
+  measurable.** With a pure signal, vocabulary sets a formation *clock*,
+  not a wall: the circuit phase-changes at ~2.7k steps for vocab 64, ~5.3k
+  for 512, ~7.9k for 4,096 (and lands *cleaner* at larger vocab: 0.94–0.96
+  vs 0.75, fewer matching collisions). On novels the reward is 0.38× the
+  model's existing statistics with a 2.6% usable margin — and nothing
+  forms at all. A mechanism inside a large model means the training run
+  cleared both bars: data that paid for it, and enough budget to build it.
 
 ## Run it yourself
 
@@ -353,6 +378,11 @@ python3 induction_on_text.py --steps 8000 --layers 1   # word 1-layer control
 python3 induction_on_text.py --tok char        # char-level null, ~15 min
 python3 induction_on_text.py --tok char --layers 1     # char 1-layer control
 python3 analyze_text.py                        # the honest-experiment plots + report
+
+# the controls: vocab clock (pure signal) + text-geometry control
+python3 induction_from_scratch.py --vocab 512  --steps 8000 --eval-batch 256
+python3 induction_from_scratch.py --vocab 4096 --steps 8000 --eval-batch 256
+python3 induction_from_scratch.py --vocab 4096 --seq 256 --batch 128 --eval-batch 128 --steps 8000
 
 python3 verify.py                              # re-checks every number in this README
 ```
@@ -389,12 +419,15 @@ regenerated by training.
   with the previous position's key — lets even a *one-layer* model form
   induction heads. Add it and watch the control stop being a control.
 - **Chase natural emergence up the ladder**: the text experiment leaves a
-  precise recipe — raise the induction payoff until the circuit appears.
-  In order of expected effect: a repetition-rich corpus (code, wiki
+  precise recipe — raise the payoff *and* lower the build cost until the
+  circuit appears. Payoff levers: a repetition-rich corpus (code, wiki
   markup — *measure the match-and-copy oracle first*; it has to beat the
-  model's statistics), BPE tokens instead of words, longer contexts, more
-  steps. `induction_on_text.py --corpus your.txt` takes any text file,
-  and `analyze_text.py` re-runs the oracle and all probes.
+  model's statistics), BPE tokens. Buildability levers: budget above the
+  vocab clock (the sandbox forms at 2.7k/5.3k/7.9k steps for vocab
+  64/512/4,096 — extrapolate with `--vocab` and check), wider heads
+  (d_head 64+), longer training.
+  `induction_on_text.py --corpus your.txt` takes any text file, and
+  `analyze_text.py` re-runs the oracle and all probes.
 - **Q-composition variant**: implement the pointer-arithmetic induction
   head (duplicate-token head + positional offset) and compare.
 
